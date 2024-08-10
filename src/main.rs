@@ -30,8 +30,6 @@ fn parse<'a>(line: &'a str) -> Vec<Value> {
             let value;
             (value, rest) = parse_block(rest);
             stack.push(value);
-        } else if let Ok(parsed) = word.parse::<i32>() {
-            stack.push(Value::Num(parsed));
         } else {
             let code = if let Ok(num) = word.parse::<i32>() {
                 Value::Num(num)
