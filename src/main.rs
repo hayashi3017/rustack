@@ -19,27 +19,23 @@ fn eval(code: Value, vm: &mut Vm) {
         top_block.push(code);
         return;
     }
-    match code {
-        // 型キャストが必要
-        Value::Op(ref op) => match op as &str {
-            "+" => add(&mut vm.stack),
-            "-" => sub(&mut vm.stack),
-            "*" => mul(&mut vm.stack),
-            "/" => div(&mut vm.stack),
-            "<" => lt(&mut vm.stack),
-            "if" => op_if(vm),
-            "def" => op_def(vm),
-            "puts" => puts(vm),
-            _ => {
-                let val = vm
-                    .vars
-                    .get(op)
-                    .expect(&format!("{op:?} is not a define operation"));
-                vm.stack.push(val.clone());
-                // vm.stack.push(*val); でもよい？
+    if let Value::Op(ref op) = code {
+        let val = vm
+            .vars
+            .get(op)
+            .expect(&format!("{op:?} is not a defined operation"))
+            .clone();
+        match val {
+            Value::Block(block) => {
+                for code in block {
+                    eval(code, vm);
+                }
             }
-        },
-        _ => vm.stack.push(code.clone()),
+            Value::Native(op) => (op.0)(vm),
+            _ => vm.stack.push(val),
+        }
+    } else {
+        vm.stack.push(code.clone());
     }
 }
 
@@ -86,10 +82,10 @@ fn parse_word<'a>(word: &'a str, vm: &mut Vm) {
 
 macro_rules! impl_op {
     {$name:ident, $op:tt} => {
-        fn $name(stack: &mut Vec<Value>) {
-            let rhs = stack.pop().unwrap().as_num();
-            let lhs = stack.pop().unwrap().as_num();
-            stack.push(Value::Num((lhs $op rhs) as i32));
+        fn $name(vm: &mut Vm) {
+            let rhs = vm.stack.pop().unwrap().as_num();
+            let lhs = vm.stack.pop().unwrap().as_num();
+            vm.stack.push(Value::Num((lhs $op rhs) as i32));
         }
     }
 }
@@ -136,6 +132,33 @@ fn puts(vm: &mut Vm) {
     println!("{}", value.to_string());
 }
 
+fn dp(vm: &mut Vm) {
+    let value = vm.stack.last().unwrap();
+    vm.stack.push(value.clone());
+}
+
+fn pop(vm: &mut Vm) {
+    vm.stack.pop().unwrap();
+}
+
+fn dup(vm: &mut Vm) {
+    let value = vm.stack.last().unwrap();
+    vm.stack.push(value.clone());
+}
+
+fn exch(vm: &mut Vm) {
+    let last = vm.stack.pop().unwrap();
+    let second = vm.stack.pop().unwrap();
+    vm.stack.push(last);
+    vm.stack.push(second);
+}
+
+fn index(vm: &mut Vm) {
+    let index = vm.stack.pop().unwrap().as_num() as usize;
+    let value = vm.stack[vm.stack.len() - index - 1].clone();
+    vm.stack.push(value);
+}
+
 // stackに加えvarsという状態を扱いたいが、引数に複数の状態を持たせるのが煩雑　→　Vmという状態にまとめる
 struct Vm {
     stack: Vec<Value>,
@@ -145,9 +168,26 @@ struct Vm {
 
 impl Vm {
     fn new() -> Self {
+        let functions: [(&str, fn(&mut Vm)); 12] = [
+            ("+", add),
+            ("-", sub),
+            ("*", mul),
+            ("/", div),
+            ("<", lt),
+            ("if", op_if),
+            ("def", op_def),
+            ("puts", puts),
+            ("pop", pop),
+            ("dup", dup),
+            ("exch", exch),
+            ("index", index),
+        ];
         Self {
             stack: vec![],
-            vars: HashMap::new(),
+            vars: functions
+                .into_iter()
+                .map(|(name, fun)| (name.to_owned(), Value::Native(NativeOp(fun))))
+                .collect(),
             blocks: vec![],
         }
     }
@@ -158,6 +198,7 @@ enum Value {
     Op(String),
     Sym(String),
     Block(Vec<Value>),
+    Native(NativeOp),
 }
 
 impl Value {
@@ -189,7 +230,26 @@ impl Value {
             // refをつける理由は
             Self::Op(ref s) | Self::Sym(ref s) => s.clone(),
             Self::Block(_) => "<Block>".to_string(),
+            Self::Native(_) => "<Native>".to_string(),
         }
+    }
+}
+
+#[derive(Clone)]
+struct NativeOp(fn(&mut Vm));
+
+impl PartialEq for NativeOp {
+    fn eq(&self, other: &Self) -> bool {
+        //　関数ポインタの値を比較する
+        self.0 as *const fn() == other.0 as *const fn()
+    }
+}
+
+impl Eq for NativeOp {}
+
+impl std::fmt::Debug for NativeOp {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "<NativeOp>")
     }
 }
 
@@ -237,5 +297,35 @@ mod test {
             parse("/x 10 def /y 20 def { x y < } { x } { y } if"),
             vec![Num(10)]
         );
+    }
+
+    #[test]
+    fn test_multiline() {
+        assert_eq!(
+            parse(
+                r#"
+/x 10 def
+/y 20 def
+
+{ x y < }
+{ x }
+{ y }
+if
+"#
+            ),
+            vec![Num(10)]
+        )
+    }
+
+    #[test]
+    fn test_function() {
+        assert_eq!(
+            parse(
+                r#"
+/double { 2 * } def
+10 double"#
+            ),
+            vec![Num(20)]
+        )
     }
 }
