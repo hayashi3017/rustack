@@ -1,10 +1,24 @@
-use std::{collections::HashMap, io::BufRead};
+use std::{
+    collections::HashMap,
+    io::{BufRead, BufReader},
+};
 
 fn main() {
-    parse_interactive();
+    if let Some(f) = std::env::args()
+        .nth(1)
+        .and_then(|f| std::fs::File::open(f).ok())
+    {
+        parse_batch(BufReader::new(f));
+    } else {
+        parse_interactive();
+    }
 }
 
 fn eval(code: Value, vm: &mut Vm) {
+    if let Some(top_block) = vm.blocks.last_mut() {
+        top_block.push(code);
+        return;
+    }
     match code {
         // 型キャストが必要
         Value::Op(ref op) => match op as &str {
@@ -32,7 +46,9 @@ fn eval(code: Value, vm: &mut Vm) {
 fn parse_batch(source: impl BufRead) -> Vec<Value> {
     let mut vm = Vm::new();
     for line in source.lines().flatten() {
-        parse_line(&line, &mut vm);
+        for word in line.split(" ") {
+            parse_word(word, &mut vm);
+        }
     }
     vm.stack
 }
@@ -40,64 +56,32 @@ fn parse_batch(source: impl BufRead) -> Vec<Value> {
 fn parse_interactive() {
     let mut vm = Vm::new();
     for line in std::io::stdin().lines().flatten() {
-        parse_line(&line, &mut vm);
+        for word in line.split(" ") {
+            parse_word(word, &mut vm);
+        }
         println!("stack: {:?}", vm.stack);
     }
 }
 
-fn parse_line<'a>(line: &'a str, vm: &mut Vm) -> Vec<Value> {
-    let input: Vec<_> = line.split(" ").collect();
-    let mut words = &input[..];
-    while let Some((&word, mut rest)) = words.split_first() {
-        if word.is_empty() {
-            break;
-        }
-        if word == "{" {
-            let value;
-            (value, rest) = parse_block(rest);
-            vm.stack.push(value);
-        } else {
-            let code = if let Ok(num) = word.parse::<i32>() {
-                Value::Num(num)
-            } else if word.starts_with("/") {
-                Value::Sym(word[1..].to_string()) // 先頭の`/`を除外する
-            } else {
-                Value::Op(word.to_string())
-            };
-            eval(code, vm);
-        }
-
-        words = rest;
+fn parse_word<'a>(word: &'a str, vm: &mut Vm) {
+    if word.is_empty() {
+        return;
     }
-    println!("stack: {:?}", vm.stack);
-    // vm.stackがCloneトレイトを未実装といわれる
-    vm.stack.clone()
-}
-
-fn parse_block<'a>(input: &'a [&str]) -> (Value, &'a [&'a str]) {
-    let mut tokens = vec![];
-    let mut words = input;
-
-    while let Some((&word, mut rest)) = words.split_first() {
-        if word.is_empty() {
-            break;
-        }
-        if word == "{" {
-            let value;
-            (value, rest) = parse_block(rest);
-            tokens.push(value);
-        } else if word == "}" {
-            return (Value::Block(tokens), rest);
-        } else if let Ok(value) = word.parse::<i32>() {
-            tokens.push(Value::Num(value))
+    if word == "{" {
+        vm.blocks.push(vec![]);
+    } else if word == "}" {
+        let top_block = vm.blocks.pop().expect("Block stack underrun!");
+        eval(Value::Block(top_block), vm);
+    } else {
+        let code = if let Ok(num) = word.parse::<i32>() {
+            Value::Num(num)
+        } else if word.starts_with("/") {
+            Value::Sym(word[1..].to_string()) // 先頭の`/`を除外する
         } else {
-            tokens.push(Value::Op(word.to_string()));
-        }
-
-        words = rest;
+            Value::Op(word.to_string())
+        };
+        eval(code, vm);
     }
-
-    (Value::Block(tokens), words)
 }
 
 macro_rules! impl_op {
@@ -156,6 +140,7 @@ fn puts(vm: &mut Vm) {
 struct Vm {
     stack: Vec<Value>,
     vars: HashMap<String, Value>,
+    blocks: Vec<Vec<Value>>,
 }
 
 impl Vm {
@@ -163,6 +148,7 @@ impl Vm {
         Self {
             stack: vec![],
             vars: HashMap::new(),
+            blocks: vec![],
         }
     }
 }
@@ -213,6 +199,7 @@ mod test {
     use std::io::Cursor;
 
     fn parse(input: &str) -> Vec<Value> {
+        // 文字列リテラルをCursorでラップしてBufReadトレイトを実装
         parse_batch(Cursor::new(input))
     }
 
