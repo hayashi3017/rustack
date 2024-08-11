@@ -84,36 +84,21 @@ fn parse_block<'src, 'a>(input: &'a [&'src str]) -> (Value<'src>, &'a [&'src str
     (Value::Block(tokens), words)
 }
 
-fn add(stack: &mut Vec<Value>) {
-    let rhs = stack.pop().unwrap().as_num();
-    let lhs = stack.pop().unwrap().as_num();
-    stack.push(Value::Num(lhs + rhs));
+macro_rules! impl_op {
+    {$name:ident, $op:tt} => {
+        fn $name(stack: &mut Vec<Value>) {
+            let rhs = stack.pop().unwrap().as_num();
+            let lhs = stack.pop().unwrap().as_num();
+            stack.push(Value::Num((lhs $op rhs) as i32));
+        }
+    }
 }
 
-fn sub(stack: &mut Vec<Value>) {
-    let rhs = stack.pop().unwrap().as_num();
-    let lhs = stack.pop().unwrap().as_num();
-    stack.push(Value::Num(lhs - rhs));
-}
-
-fn mul(stack: &mut Vec<Value>) {
-    let rhs = stack.pop().unwrap().as_num();
-    let lhs = stack.pop().unwrap().as_num();
-    stack.push(Value::Num(lhs * rhs));
-}
-
-fn div(stack: &mut Vec<Value>) {
-    let rhs = stack.pop().unwrap().as_num();
-    let lhs = stack.pop().unwrap().as_num();
-    stack.push(Value::Num(lhs / rhs));
-}
-
-fn lt(stack: &mut Vec<Value>) {
-    let rhs = stack.pop().unwrap().as_num();
-    let lhs = stack.pop().unwrap().as_num();
-    // trueが1、falseが0 としてキャストされる
-    stack.push(Value::Num((lhs < rhs) as i32));
-}
+impl_op!(add, +);
+impl_op!(sub, -);
+impl_op!(mul, *);
+impl_op!(div, /);
+impl_op!(lt, <);
 
 fn op_if<'src>(vm: &mut Vm<'src>) {
     let false_branch = vm.stack.pop().unwrap().to_block();
